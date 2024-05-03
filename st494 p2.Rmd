@@ -1,0 +1,633 @@
+---
+title: "494 project 2"
+output: html_document
+date: "2024-03-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r}
+df <- read.csv("/Users/yiqiankang/Downloads/st 494 project/hypothyroid.data", na.strings = "?")
+
+head(df)
+dim(df)
+summary(df)
+str(df)
+```
+
+```{r}
+df <- read.csv("/Users/yiqiankang/Downloads/st 494 project/hypothyroid.data", na.strings = "?")
+library(dplyr)
+# Renaming variables for clarity also change logical value to binary
+df <- df %>%
+  rename(
+    Hypothyroid = hypothyroid, Age = X72, Sex = M, OnThyroxine = f, QueryOnThyroxine = f.1, OnAntithyroidMedication = f.2, ThyroidSurgery = f.3, QueryHypothyroid = f.4, QueryHyperthyroid = f.5, Pregnant = f.6, Sick = f.7, Tumor = f.8, Lithium = f.9, Goitre = f.10, TSHMeasured = y, TSH = X30, T3Measured = y.1, T3 = X0.60, TT4Measured = y.2, TT4 = X15, T4UMeasured = y.3, T4U = X1.48, FTIMeasured = y.4, FTI = X10, TBGMeasured = n, TBG = X. )
+
+binary_columns <- c("OnThyroxine", "QueryOnThyroxine", "OnAntithyroidMedication", "ThyroidSurgery",
+                    "QueryHypothyroid", "QueryHyperthyroid", "Pregnant", "Sick", "Tumor", "Lithium",
+                    "Goitre", "TSHMeasured", "T3Measured", "TT4Measured", "T4UMeasured", "FTIMeasured", "TBGMeasured")
+for(col in binary_columns) {
+  df[[col]] <- ifelse(df[[col]] == "t", TRUE, FALSE)
+}
+df[binary_columns] <- lapply(df[binary_columns], as.numeric)
+head(df)
+
+#check sum of NA value, to decide method for data clean
+print('Checking NA')
+cat("Count of NA:", sum(is.na(df)), "\n")
+cat("Dimensions before NA omission:", dim(df), "\n")
+
+# Adjusting for columns with more than a 50% threshold of missing values
+threshold <- 0.5 # 50% missing
+df1 <- df[, colMeans(is.na(df)) < threshold]
+cat("Dimensions after removing columns with >50% missing:", dim(df1), "\n")
+dim(df1)
+```
+
+```{r}
+par(mar = c(4, 4, 2, 1))
+summary(df1)
+continuous_vars <- sapply(df, is.numeric)
+par(mfrow = c(4,4)) 
+for (var in names(df)[continuous_vars]) {
+  hist(df[[var]], main = var, xlab = var, breaks = "Sturges", col = "lightblue")
+}
+
+library(e1071)
+
+# Calculate skewness for each numeric variable
+skewness_values <- sapply(df[, continuous_vars], skewness)
+print(skewness_values)
+
+par(mfrow = c(4,4)) 
+for (var in names(df)[continuous_vars]) {
+  boxplot(df[[var]], main = var, horizontal = TRUE, col = "lightgreen")
+}
+```
+
+```{r}
+continuous_vars <- c('Age', 'TSH', 'T3', 'TT4', 'T4U', 'FTI')
+for (var in continuous_vars) {
+  df1[[var]][is.na(df1[[var]])] <- median(df1[[var]], na.rm = TRUE)
+}
+df2 <- na.omit(df1)
+df3 <- na.omit(df1)
+df4 <- na.omit(df1)
+cat("Dimensions after NA omission:", dim(df2), "\n")
+
+model_org <- aov(Age ~ ., data=df2)
+summary(model_org)
+```
+
+
+```{r}
+# Function to find outliers based on IQR
+find_outliers <- function(data) {
+  Q1 <- quantile(data, 0.25, na.rm = TRUE)
+  Q3 <- quantile(data, 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  return(data < (Q1 - 1.5 * IQR) | data > (Q3 + 1.5 * IQR))
+}
+
+# Apply the function to each continuous variable
+outlier_list <- lapply(df2[, continuous_vars], find_outliers)
+
+outlier_counts <- sapply(df[, continuous_vars], function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  sum(x < lower_bound | x > upper_bound, na.rm = TRUE)
+})
+outlier_counts
+
+```
+
+
+```{r}
+# Compute the correlation matrix
+cor_matrix <- cor(df2[, continuous_vars], use = "complete.obs")
+library(corrplot)
+corrplot(cor_matrix, method = "circle")
+```
+
+
+```{r}
+# Function to run Chi-squared tests on all pairs of categorical variables
+run_chi_squared_tests <- function(dataframe, variables) {
+  chi_results <- list()
+  for(i in 1:length(variables)) {
+    for(j in (i+1):length(variables)) {
+      cat("Running Chi-squared test for:", variables[i], "and", variables[j], "\n")
+      test_result <- tryCatch({
+        chisq.test(table(dataframe[[variables[i]]], dataframe[[variables[j]]]))
+      }, warning = function(w) {
+        return(NA)
+      }, error = function(e) {
+        return(NA)
+      }, finally = {})
+      chi_results[[paste(variables[i], variables[j], sep = "_vs_")]] <- test_result
+    }
+  }
+  return(chi_results)
+}
+chi_squared_results <- run_chi_squared_tests(df2, binary_columns)
+```
+
+
+```{r}
+library(ggplot2)
+# Log-transforming only the continuous variables
+continuous_vars <- c("Age", "TSH", "T3", "TT4", "T4U", "FTI")
+model_org <- aov(Age ~ TSH + T3 + TT4 + T4U + FTI, data = df2)
+model_log <- aov(Age ~  log(TSH + 1) + log(T3 + 1) + log(TT4 + 1) + log(T4U + 1) + log(FTI + 1), data = df2)
+
+# Summary of ANOVA models
+summary(model_org)
+summary(model_log)
+
+# Example Plot - Original vs. Log-transformed TSH
+par(mfrow = c(1, 2))
+hist(df$TSH, main = "Original TSH", xlab = "TSH")
+hist(df_log$TSH, main = "Log-Transformed TSH", xlab = "log(TSH)")
+
+```
+```{r}
+
+fit.lm <- lm(Age ~ TSH + T3 + TT4 + T4U + FTI, data = df2)
+summary(fit.lm) 
+plot(fit.lm, 1)
+```
+
+
+
+```{r}
+n <- nrow(df2)
+train_size <- round(0.70 * n)
+train_index <- sample(seq_len(n), size = train_size)
+train <- df2[train_index, ]
+test <- df2[-train_index, ]
+
+
+#library(caret)
+#train_control <- trainControl(method = "cv", number = 10)
+#model <- train(target ~ ., data = train_data, method = "lm", trControl = train_control)
+
+```
+
+```{r}
+library(tidyverse)
+library(cluster) 
+library(factoextra) 
+
+fviz_nbclust(df2[,continuous_vars], kmeans, method = "wss") +
+  geom_vline(xintercept = 4, linetype = 2) +
+  labs(subtitle = "Elbow method")
+k <- 4 
+kmeans_result <- kmeans(df2[,continuous_vars], centers = k, nstart = 25)
+df2$cluster <- kmeans_result$cluster
+
+# Analyzing the clusters
+print(table(df2$cluster)) 
+aggregate(df2[,continuous_vars], by = list(df2$cluster), FUN = mean)
+fviz_cluster(list(data = df2[,continuous_vars], cluster = kmeans_result$cluster))
+```
+
+
+```{r}
+hc_single <- hclust(dist(df2[, continuous_vars]), method = "single")
+hc_average <- hclust(dist(df2[, continuous_vars]), method = "average")
+hc_complete <- hclust(dist(df2[, continuous_vars]), method = "complete")
+
+par(mfrow = c(1,3))
+plot(hc_single, main = "Single Linkage", sub = "", xlab = "")
+plot(hc_average, main = "Average Linkage", sub = "", xlab = "")
+plot(hc_complete, main = "Complete Linkage", sub = "", xlab = "")
+
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+df_pca <- df2[, continuous_vars]
+pca_result <- prcomp(df_pca, scale. = TRUE)
+summary(pca_result)
+plot(pca_result, type = "l", main = "Scree Plot")
+pca_data <- as.data.frame(pca_result$x)
+ggplot(pca_data, aes(PC1, PC2)) +
+  geom_point() +
+  xlab("Principal Component 1") +
+  ylab("Principal Component 2") +
+  ggtitle("PCA - First two principal components")
+pca_data$Hypothyroid <- df2$Hypothyroid
+
+ggplot(pca_data, aes(PC1, PC2, color = as.factor(Hypothyroid))) +
+  geom_point() +
+  xlab("Principal Component 1") +
+  ylab("Principal Component 2") +
+  ggtitle("PCA - First two principal components by Hypothyroid Status")
+plot(pca_result, type = "lines")
+loadings(pca_result)[, 1:2]
+
+
+# Assuming pca_result is your PCA object
+# Plotting the loadings of the first two principal components
+library(ggplot2)
+
+
+ggplot(pca_data, aes(PC1, PC2)) +
+  geom_segment(aes(x = 0, y = 0, xend = PC1, yend = PC2), arrow = arrow(length = unit(0.2, "inches"))) +
+  geom_text(aes(label = rownames(pca_data)), hjust = 0, vjust = 0) +
+  theme_minimal() +
+  labs(title = "PCA Loadings")
+
+# Plotting the biplot
+biplot(pca_result)
+
+loading_scores <- pca_result$rotation
+print(loading_scores)
+```
+
+```{r}
+
+```
+
+```{r}
+
+library(MASS) 
+library(dplyr)
+library(ggplot2)
+
+min_vals <- apply(df2[, continuous_vars], 2, min)
+offset <- abs(min(min_vals[min_vals <= 0])) + 1
+
+df_positive <- df2[, continuous_vars] + offset
+df_transformed <- df_positive  
+
+for(var in names(df_positive)) {
+  bc_transform <- boxcox(as.formula(paste(var, "~ 1", sep = "")), data = df_positive)
+  lambda <- bc_transform$x[which.max(bc_transform$y)]  # Find the lambda that maximizes the log-likelihood
+  if(lambda != 0) {
+    df_transformed[[var]] <- (df_positive[[var]]^lambda - 1) / lambda
+  } else {
+    df_transformed[[var]] <- log(df_positive[[var]])
+  }
+}
+df_transformed <- cbind(df_transformed, df2[, setdiff(names(df2), continuous_vars)])
+
+# Perform PCA on the transformed and scaled data
+pca_result <- prcomp(df_transformed[, continuous_vars], scale. = TRUE)
+summary(pca_result)
+
+# Scree plot
+plot(pca_result, type = "l", main = "Scree Plot")
+pca_data <- as.data.frame(pca_result$x)
+pca_data$Hypothyroid <- df2$Hypothyroid  
+
+# PCA plot by Hypothyroid status
+ggplot(pca_data, aes(PC1, PC2, color = as.factor(Hypothyroid))) +
+  geom_point() +
+  xlab("Principal Component 1") +
+  ylab("Principal Component 2") +
+  ggtitle("PCA - First two principal components by Hypothyroid Status")
+
+# Loadings from PCA
+loading_scores <- pca_result$rotation  
+print(loading_scores)
+#biplot(pca_result)
+
+library(tidyverse)
+library(cluster) 
+library(factoextra) 
+fviz_nbclust(df2[,continuous_vars], kmeans, method = "wss") +
+  geom_vline(xintercept = 4, linetype = 2) +
+  labs(subtitle = "Elbow method")
+k <- 4 
+kmeans_result <- kmeans(df2[,continuous_vars], centers = k, nstart = 25)
+df2$cluster <- kmeans_result$cluster
+
+# Analyzing the clusters
+print(table(df2$cluster)) 
+aggregate(df2[,continuous_vars], by = list(df2$cluster), FUN = mean)
+fviz_cluster(list(data = df2[,continuous_vars], cluster = kmeans_result$cluster))
+```
+
+
+
+```{r}
+# Assuming pca_result$x contains the PCA scores from the transformed and scaled data
+pca_data <- as.data.frame(pca_result$x)
+pca_data$Hypothyroid <- df2$Hypothyroid  # Actual labels
+dist_matrix <- dist(pca_data[, -ncol(pca_data)], method = "euclidean")
+
+# Hierarchical clustering using different methods
+hc_single <- hclust(dist_matrix, method = "single")
+hc_complete <- hclust(dist_matrix, method = "complete")
+hc_average <- hclust(dist_matrix, method = "average")
+
+clusters_single <- cutree(hc_single, k = 2)
+clusters_complete <- cutree(hc_complete, k = 2)
+clusters_average <- cutree(hc_average, k = 2)
+table_single <- table(pca_data$Hypothyroid, clusters_single)
+misclassification_rate_single <- 1 - sum(diag(table_single)) / sum(table_single)
+
+table_complete <- table(pca_data$Hypothyroid, clusters_complete)
+misclassification_complete <- 1 - sum(diag(table_complete)) / sum(table_complete)
+
+table_average <- table(pca_data$Hypothyroid, clusters_average)
+misclassification_average <- 1 - sum(diag(table_average)) / sum(table_average)
+
+table_single
+table_complete
+table_average
+misclassification_rate_single
+misclassification_complete
+misclassification_average
+```
+
+
+```{r}
+
+library(caret)
+library(cluster)
+
+pca_data$Hypothyroid <- as.factor(pca_data$Hypothyroid)
+levels(pca_data$Hypothyroid) <- c("0", "1")
+clusters_single <- as.factor(clusters_single)
+levels(clusters_single) <- c("0", "1")
+confusion_matrix_single <- confusionMatrix(clusters_single, pca_data$Hypothyroid)
+misclassification_rate_single <- 1 - sum(diag(confusion_matrix_single$table)) / sum(confusion_matrix_single$table)
+
+clusters_complete <- as.factor(clusters_complete)
+levels(clusters_complete) <- c("0", "1")
+confusion_matrix_complete <- confusionMatrix(clusters_complete, pca_data$Hypothyroid)
+misclassification_rate_complete <- 1 - sum(diag(confusion_matrix_complete$table)) / sum(confusion_matrix_complete$table)
+
+
+clusters_average <- as.factor(clusters_average)
+levels(clusters_average) <- c("0", "1")
+confusion_matrix_average<- confusionMatrix(clusters_average, pca_data$Hypothyroid)
+misclassification_rate_average <- 1 - sum(diag(confusion_matrix_average$table)) / sum(confusion_matrix_average$table)
+
+f1_score_single <- confusion_matrix_single$byClass['F1']
+precision_single <- confusion_matrix_single$byClass['Precision']
+recall_single <- confusion_matrix_single$byClass['Recall']
+
+# Printing the statistics
+print(paste("Misclassification rate (Single):", misclassification_rate_single))
+print(paste("F1 Score (Single):", f1_score_single))
+print(paste("Precision (Single):", precision_single))
+print(paste("Recall (Single):", recall_single))
+
+f1_score_complete <- confusion_matrix_complete$byClass['F1']
+precision_complete <- confusion_matrix_complete$byClass['Precision']
+recall_complete <- confusion_matrix_complete$byClass['Recall']
+
+# Printing the statistics
+print(paste("Misclassification rate (complete):", misclassification_rate_complete))
+print(paste("F1 Score (complete):", f1_score_complete))
+print(paste("Precision (complete):", precision_complete))
+print(paste("Recall (complete):", recall_complete))
+
+f1_score_average <- confusion_matrix_average$byClass['F1']
+precision_average <- confusion_matrix_average$byClass['Precision']
+recall_average <- confusion_matrix_average$byClass['Recall']
+
+# Printing the statistics
+print(paste("Misclassification rate (average):", misclassification_rate_average))
+print(paste("F1 Score (average):", f1_score_average))
+print(paste("Precision (average):", precision_average))
+print(paste("Recall (average):", recall_average))
+
+```
+
+
+```{r}
+library(MASS)
+library(caret)
+
+
+if (!"Hypothyroid" %in% colnames(pca_data)) {
+  stop("Column 'Hypothyroid' does not exist in the pca_data dataset.")
+}
+pca_data$Hypothyroid <- as.factor(pca_data$Hypothyroid)
+
+training_indices <- createDataPartition(pca_data$Hypothyroid, p = 0.7, list = FALSE)
+train_data <- pca_data[training_indices, ]
+test_data <- pca_data[-training_indices, ]
+
+# LDA
+lda_model <- lda(Hypothyroid ~ ., data = train_data)
+lda_pred <- predict(lda_model, newdata = test_data)
+confusion_matrix_lda <- confusionMatrix(lda_pred$class, test_data$Hypothyroid)
+#print(confusion_matrix_lda)
+
+# QDA
+qda_model <- qda(Hypothyroid ~ ., data = train_data)
+qda_pred <- predict(qda_model, newdata = test_data)
+confusion_matrix_qda <- confusionMatrix(qda_pred$class, test_data$Hypothyroid)
+#print(confusion_matrix_qda)
+
+
+misclassification_ratel <- 1 - confusion_matrix_lda$overall['Accuracy']
+f1_scorel <- confusion_matrix_lda$byClass['F1']
+precisionl <- confusion_matrix_lda$byClass['Precision']
+recalll <- confusion_matrix_lda$byClass['Sensitivity']
+
+# Printing the statistics
+cat("Misclassification Rate:", misclassification_ratel, "\n")
+cat("F1 Score:", f1_scorel, "\n")
+cat("Precision:", precisionl, "\n")
+cat("Recall:", recalll, "\n")
+
+
+misclassification_rate <- 1 - confusion_matrix_qda$overall['Accuracy']
+f1_score <- confusion_matrix_qda$byClass['F1']
+precision <- confusion_matrix_qda$byClass['Precision']
+recall <- confusion_matrix_qda$byClass['Sensitivity']
+
+# Printing the statistics
+cat("Misclassification Rate:", misclassification_rate, "\n")
+cat("F1 Score:", f1_score, "\n")
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+
+```
+
+
+```{r}
+library(e1071)
+library(caret) 
+
+
+df3$Hypothyroid <- as.factor(df3$Hypothyroid)
+sum(is.na(df3$Hypothyroid))
+df3 <- na.omit(df3)
+
+index <- createDataPartition(df3$Hypothyroid, p = 0.7, list = FALSE)
+trainData <- df3[index, ]
+testData <- df3[-index, ]
+
+preProcValues <- preProcess(trainData[, continuous_vars], method = c("center", "scale"))
+trainData[, continuous_vars] <- predict(preProcValues, trainData[, continuous_vars])
+testData[, continuous_vars] <- predict(preProcValues, testData[, continuous_vars])
+
+svmModel <- svm(Hypothyroid ~ ., data = trainData, type = 'C-classification', kernel = 'radial')
+
+predictions <- predict(svmModel, testData)
+confusionMatrix <- table(Predicted = predictions, Actual = testData$Hypothyroid)
+
+print(confusionMatrix)
+
+
+tp <- 34 
+tn <- 878 
+fp <- 4  
+fn <- 10  
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+total_predictions <- tp + tn + fp + fn
+misclassification_rate <- (fp + fn) / total_predictions
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1 Score:", f1_score, "\n")
+cat("Misclassification Rate:", misclassification_rate, "\n")
+
+
+```
+
+
+```{r}
+library(randomForest)
+baggingModel <- randomForest(Hypothyroid ~ ., data=df3, ntree=500, mtry=ncol(df3)-1, importance=TRUE)
+print(baggingModel)
+baggingPredictions <- predict(baggingModel, df3)
+confusionMatrix <- table(Predicted=baggingPredictions, Actual=df3$Hypothyroid)
+print(confusionMatrix)
+randomForestModel <- randomForest(Hypothyroid ~ ., data=df3, ntree=500, importance=TRUE)
+print(randomForestModel)
+rfPredictions <- predict(randomForestModel, df3)
+confusionMatrixRF <- table(Predicted=rfPredictions, Actual=df3$Hypothyroid)
+
+print(confusionMatrixRF)
+
+
+baggingPredictions <- factor(baggingPredictions, levels = levels(df3$Hypothyroid))
+actualValues <- factor(df3$Hypothyroid, levels = levels(df3$Hypothyroid))
+confMatrixBagging <- confusionMatrix(baggingPredictions, actualValues)
+print(confMatrixBagging)
+cat("Bagging - Accuracy:", confMatrixBagging$overall['Accuracy'], "\n")
+cat("Bagging - Precision:", confMatrixBagging$byClass['Pos Pred Value'], "\n")
+cat("Bagging - Recall:", confMatrixBagging$byClass['Sensitivity'], "\n")
+cat("Bagging - F1 Score:", confMatrixBagging$byClass['F1'], "\n")
+cat("Bagging - Misclassification Rate:", 1 - confMatrixBagging$overall['Accuracy'], "\n")
+
+
+rfPredictions <- factor(rfPredictions, levels = levels(df3$Hypothyroid))
+confMatrixRF <- confusionMatrix(rfPredictions, actualValues)
+print(confMatrixRF)
+cat("Random Forest - Accuracy:", confMatrixRF$overall['Accuracy'], "\n")
+cat("Random Forest - Precision:", confMatrixRF$byClass['Pos Pred Value'], "\n")
+cat("Random Forest - Recall:", confMatrixRF$byClass['Sensitivity'], "\n")
+cat("Random Forest - F1 Score:", confMatrixRF$byClass['F1'], "\n")
+cat("Random Forest - Misclassification Rate:", 1 - confMatrixRF$overall['Accuracy'], "\n")
+```
+
+
+
+```{r}
+library(e1071)
+library(caret) 
+df3$Hypothyroid <- as.factor(df3$Hypothyroid)
+sum(is.na(df3$Hypothyroid))
+df3 <- na.omit(df3)
+
+index <- createDataPartition(df3$Hypothyroid, p = 0.7, list = FALSE)
+trainData <- df3[index, ]
+testData <- df3[-index, ]
+library(leaps)
+fit_best <- regsubsets(Hypothyroid ~ ., data = trainData, nvmax = 13) 
+fit_best_sum <- summary(fit_best)
+fit_best_sum
+names(fit_best_sum)
+fit_best_sum$cp
+plot(fit_best, scale='adjr2') 
+
+
+fit_bwd <-  regsubsets(Hypothyroid ~ ., data = trainData, nvmax = 13, method = "backward") 
+fit_bwd_sum <- summary(fit_bwd) 
+fit_bwd_sum # SEED
+
+fit_fwd <- regsubsets(Hypothyroid ~ ., data = trainData, nvmax = 13, method = "forward") # SOLUTION
+fit_fwd_sum <- summary(fit_fwd) # SEED
+fit_fwd_sum # SEED
+
+
+results = data.frame( 
+    "Cp" = c(which.min(summary(fit_best)$cp),which.min(summary(fit_fwd)$cp),
+                             which.min(summary(fit_bwd)$cp)),
+    "bic"= c(which.min(summary(fit_best)$bic),which.min(summary(fit_fwd)$bic),
+                             which.min(summary(fit_bwd)$bic)), 
+    "adjr2" = c(which.max(summary(fit_best)$adjr2),which.max(summary(fit_fwd)$adjr2),
+                             which.max(summary(fit_bwd)$adjr2))
+)
+
+x = c("Best Subset selection", "Forward Stepwise","Backward Stepwise")
+
+row.names(results) = x
+
+results
+
+```
+
+```{r}
+
+get_model_info <- function(fit){
+  summary_fit <- summary(fit)
+  cp_min <- which.min(summary_fit$cp)
+  bic_min <- which.min(summary_fit$bic)
+  adjr2_max <- which.max(summary_fit$adjr2)
+  
+  model_info <- list(
+    cp_min_model_size = cp_min,
+    cp_min_variables = names(summary_fit$which[cp_min,])[summary_fit$which[cp_min,]],
+    bic_min_model_size = bic_min,
+    bic_min_variables = names(summary_fit$which[bic_min,])[summary_fit$which[bic_min,]],
+    adjr2_max_model_size = adjr2_max,
+    adjr2_max_variables = names(summary_fit$which[adjr2_max,])[summary_fit$which[adjr2_max,]]
+  )
+  
+  return(model_info)
+}
+best_subset_info <- get_model_info(fit_best)
+forward_stepwise_info <- get_model_info(fit_fwd)
+backward_stepwise_info <- get_model_info(fit_bwd)
+
+best_subset_info
+forward_stepwise_info
+backward_stepwise_info
+```
+
+```{r}
+# in r when i try to use the caret package, it just show me error, so i just use jupyter book to run the code with caret package. Then i just copy it to the r, for easy to check all the code.
+
+```
+
